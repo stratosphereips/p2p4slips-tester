@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"github.com/go-redis/redis/v7"
 	"github.com/libp2p/go-libp2p"
@@ -91,16 +92,18 @@ func (p *Peer) redisInit() error {
 func (p *Peer) p2pInit(keyFile string, keyReset bool) error {
 	p.ctx = context.Background()
 
-	prvKey := p.loadKey(keyFile, keyReset)
-
-	p.privKey = prvKey
+	r := rand.Reader
+	prvKey, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, r)
+	if err != nil {
+		fmt.Printf("[KEY UTIL] Error generating key - %s\n", err)
+		return nil
+	}
 
 	// 0.0.0.0 will listen on any interface device.
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", p.hostname, p.port))
 
 	// libp2p.New constructs a new libp2p Host.
 	// Other options can be added here.
-	var err error
 	p.host, err = libp2p.New(
 		p.ctx,
 		libp2p.ListenAddrs(sourceMultiAddr),

@@ -107,6 +107,14 @@ func (p *Peer) discoverPeers() error {
 		remotePeer := peerAddress.ID
 		remotePeerStr := remotePeer.Pretty()
 		remoteMA := fmt.Sprintf("%s/p2p/%s", peerAddress.Addrs[0], remotePeerStr)
+
+		if err := p.host.Connect(p.ctx, peerAddress); err != nil {
+			fmt.Println("Connection failed:", err)
+			return
+		}
+
+		p.openStreamFromPeerData(remoteMA)
+
 		addNewPeer(&p.peerList, remoteMA)
 	}}()
 	return nil

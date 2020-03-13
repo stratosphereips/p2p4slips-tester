@@ -32,7 +32,7 @@ type Peer struct {
 	keyFile    string
 	resetKey   bool
 	peerstoreFile string
-	peerList   []string
+	peerList   map[string]*PeerData
 }
 
 func (p *Peer) peerInit() error {
@@ -41,6 +41,8 @@ func (p *Peer) peerInit() error {
 
 	p.activePeers = p.host.ID().Pretty() + "-active"
 	p.allPeers = p.host.ID().Pretty() + "-all"
+
+	p.peerList = make(map[string]*PeerData)
 
 	// link to a listener for new connections
 	// TODO: this can't be tested that easily on localhost, as they will connect to the same db. Perhaps more redises?
@@ -102,7 +104,7 @@ func (p *Peer) discoverPeers() error {
 		remotePeer := peerAddress.ID
 		remotePeerStr := remotePeer.Pretty()
 		remoteMA := fmt.Sprintf("%s/p2p/%s", peerAddress.Addrs[0], remotePeerStr)
-		p.addNewPeer(remoteMA)
+		addNewPeer(&p.peerList, remoteMA)
 	}}()
 	return nil
 }
@@ -123,8 +125,8 @@ func (p *Peer) talker() {
 		if parsedCommand[0] == "ls" {
 			// list peers
 			fmt.Println("Available peers")
-			for peerID := range p.peerList {
-				fmt.Println(peerID)
+			for name, data := range p.peerList {
+				fmt.Printf("%s, address: %s\n", name, data.MultiAddress)
 			}
 		} else if parsedCommand[0] == "open"{
 			// pass
@@ -140,7 +142,7 @@ func (p *Peer) listener(stream network.Stream) {
 	remotePeer := stream.Conn().RemotePeer()
 	remotePeerStr := remotePeer.Pretty()
 	remoteMA := fmt.Sprintf("%s/p2p/%s", stream.Conn().RemoteMultiaddr(), remotePeerStr)
-	p.addNewPeer(remoteMA)
+	addNewPeer(&p.peerList, remoteMA)
 	fmt.Println("New stream from", remoteMA)
 }
 
@@ -244,11 +246,4 @@ func (p *Peer) sendMessageToStream(stream network.Stream, msg string, timeout ti
 	}
 
 	return data, true
-}
-
-func (p *Peer) addNewPeer(remoteMA string) {
-	if !strings.Contains(strings.Join(p.peerList, ","), remoteMA) {
-  		fmt.Println("New peer found")
-		p.peerList = append(p.peerList, remoteMA)
-	}
 }

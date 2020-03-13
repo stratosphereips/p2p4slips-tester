@@ -166,7 +166,24 @@ func (p *Peer) talker() {
 				fmt.Printf("%s, address: %s\n", name, data.MultiAddress)
 			}
 		} else if parsedCommand[0] == "open"{
-			// pass
+			if len(parsedCommand) < 2 {
+				fmt.Println("Please provide a node name")
+				continue
+			}
+			name := strings.ToLower(parsedCommand[1])
+			peerData, ok := p.peerList[name]
+			if !ok {
+				fmt.Println("There is no peer named", name)
+				continue
+			}
+			fmt.Println("Opening stream with", name)
+
+			stream := p.openStreamFromPeerData(peerData.MultiAddress)
+			if stream == nil {
+				fmt.Println("Couldn't open stream", peerData.MultiAddress)
+				continue
+			}
+			chatWithPeer(&stream, peerData)
 		} else {
 			fmt.Printf("Unknown command: '%s'\nUse 'ls' or 'open name'\n", command)
 		}
@@ -203,6 +220,7 @@ func chatWithPeer(stream *network.Stream, remotePeer *PeerData) {
 		}
 
 		if message == "x\n" {
+			// TODO: chat should be automatically closed when reader reaches eof
 			fmt.Println("Closing chat...")
 			return
 		}

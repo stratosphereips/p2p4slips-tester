@@ -19,20 +19,22 @@ import (
 )
 
 type Peer struct {
-	activePeers string
-	allPeers string
-	host       host.Host
-	port       int
-	hostname   string
-	protocol   string
-	dbAddress  string
-	rendezVous string
-	ctx        context.Context
-	privKey    crypto.PrivKey
-	keyFile    string
-	resetKey   bool
+	activePeers   string
+	allPeers      string
+	host          host.Host
+	port          int
+	hostname      string
+	protocol      string
+	dbAddress     string
+	rendezVous    string
+	ctx           context.Context
+	privKey       crypto.PrivKey
+	keyFile       string
+	resetKey      bool
 	peerstoreFile string
-	peerList   map[string]*PeerData
+	peerList      map[string]*PeerData
+	streamQueue   []*network.Stream
+	streamNameQueue   []string
 }
 
 func (p *Peer) peerInit() error {
@@ -43,6 +45,7 @@ func (p *Peer) peerInit() error {
 	p.allPeers = p.host.ID().Pretty() + "-all"
 
 	p.peerList = make(map[string]*PeerData)
+	p.streamQueue = make([]*network.Stream, 0)
 
 	// link to a listener for new connections
 	// TODO: this can't be tested that easily on localhost, as they will connect to the same db. Perhaps more redises?
@@ -114,14 +117,48 @@ func (p *Peer) talker() {
 	fmt.Println("I am talking now")
 
 	for {
+
+		if len(p.streamQueue) > 0 {
+			stream := p.streamQueue[0]
+			name := p.streamNameQueue[0]
+			p.streamQueue = p.streamQueue[1:]
+			p.streamNameQueue = p.streamNameQueue[1:]
+
+			remotePeer := p.peerList[strings.ToLower(name)]
+			fmt.Printf("New stream from %s, message: %s\n", name, remotePeer.Messages)
+
+			fmt.Print("Accept? [y/n] ")
+			command, err := stdReader.ReadString('\n')
+			if err != nil {
+				fmt.Println("Error reading from stdin")
+				panic(err)
+			}
+
+			command = strings.ToLower(strings.TrimSpace(command))
+
+			if command == "n" {
+				fmt.Println("Closing stream")
+				(*stream).Close()
+				continue
+			}
+
+			// connect to stream
+			chatWithPeer(stream, remotePeer)
+			fmt.Println("Closing stream")
+			(*stream).Close()
+			continue
+		}
+
 		fmt.Print("> ")
-		sendData, err := stdReader.ReadString('\n')
+		command, err := stdReader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error reading from stdin")
 			panic(err)
 		}
-		sendData = strings.TrimSpace(sendData)
-		parsedCommand := strings.Split(sendData, " ")
+
+		command = strings.TrimSpace(command)
+		parsedCommand := strings.Split(command, " ")
+
 		if parsedCommand[0] == "ls" {
 			// list peers
 			fmt.Println("Available peers")
@@ -131,19 +168,76 @@ func (p *Peer) talker() {
 		} else if parsedCommand[0] == "open"{
 			// pass
 		} else {
-			fmt.Printf("Unknown command: '%s'\nUse 'ls' or 'open name'\n", sendData)
+			fmt.Printf("Unknown command: '%s'\nUse 'ls' or 'open name'\n", command)
 		}
 	}
 }
 
 func (p *Peer) listener(stream network.Stream) {
-	defer p.closeStream(stream)
-
 	remotePeer := stream.Conn().RemotePeer()
 	remotePeerStr := remotePeer.Pretty()
 	remoteMA := fmt.Sprintf("%s/p2p/%s", stream.Conn().RemoteMultiaddr(), remotePeerStr)
-	addNewPeer(&p.peerList, remoteMA)
+	peerData := addNewPeer(&p.peerList, remoteMA)
 	fmt.Println("New stream from", remoteMA)
+	p.streamQueue = append(p.streamQueue, &stream)
+	p.streamNameQueue = append(p.streamNameQueue, peerData.Name)
+}
+
+func chatWithPeer(stream *network.Stream, remotePeer *PeerData) {
+	// open rw
+	rw := bufio.NewReadWriter(bufio.NewReader(*stream), bufio.NewWriter(*stream))
+	// open read from stdin
+	stdReader := bufio.NewReader(os.Stdin)
+
+	fmt.Printf("Chatting with %s. What do you want to say?\n", remotePeer.Name)
+
+	go readData(rw, remotePeer.Name)
+
+	for {
+
+		fmt.Print("> ")
+		message, err := stdReader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading from stdin")
+			panic(err)
+		}
+
+		if message == "x\n" {
+			fmt.Println("Closing chat...")
+			return
+		}
+
+		_, err = rw.WriteString(fmt.Sprintf("%s\n", message))
+		if err != nil {
+			fmt.Println("Error writing to buffer")
+			panic(err)
+		}
+		err = rw.Flush()
+		if err != nil {
+			fmt.Println("Error flushing buffer")
+			panic(err)
+		}
+	}
+}
+
+func readData(rw *bufio.ReadWriter, name string) {
+	for {
+		str, err := rw.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading from buffer")
+			return
+		}
+
+		if str == "" {
+			return
+		}
+		if str != "\n" {
+			// Green console colour: 	\x1b[32m
+			// Reset console colour: 	\x1b[0m
+			fmt.Printf("\x1b[32m%s\x1b[0m: %s\n", name, str)
+		}
+
+	}
 }
 
 func rw2channel(input chan string, rw *bufio.ReadWriter) {

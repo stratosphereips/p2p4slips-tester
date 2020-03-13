@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"github.com/go-redis/redis/v7"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
@@ -20,7 +19,6 @@ import (
 )
 
 type Peer struct {
-	rdb  *redis.Client
 	activePeers string
 	allPeers string
 	host       host.Host
@@ -38,12 +36,6 @@ type Peer struct {
 }
 
 func (p *Peer) peerInit() error {
-	err := p.redisInit()
-	if err != nil {
-		fmt.Println("[PEER] Database connection failed -", err)
-		return err
-	}
-
 	// prepare p2p host
 	p.p2pInit(p.keyFile, p.resetKey)
 
@@ -57,36 +49,13 @@ func (p *Peer) peerInit() error {
 	p.host.SetStreamHandler(protocol.ID(p.protocol), p.listener)
 
 	// run peer discovery in the background
-	err = p.discoverPeers()
+	err := p.discoverPeers()
 	if err != nil {
 		return err
 	}
 
-	go p.pingLoop()
+	go p.talker()
 	return nil
-}
-
-func (p *Peer) redisInit() error {
-	// connect to the database
-	// TODO: not crashing when database is offline would be nice
-	//  also when database shuts down while this is still running...
-	p.rdb = redis.NewClient(&redis.Options{
-		Addr:     p.dbAddress,
-		Password: "", // no password set
-		DB:       0,  // use default DB
-	})
-
-	// delete db
-	// TODO: remove for production
-	p.rdb.FlushAll()
-
-	pongErr := p.rdb.Ping().Err()
-
-	if pongErr != nil {
-		fmt.Println("[PEER] Database connection failed -", pongErr)
-	}
-
-	return pongErr
 }
 
 func (p *Peer) p2pInit(keyFile string, keyReset bool) error {
@@ -138,7 +107,7 @@ func (p *Peer) discoverPeers() error {
 	return nil
 }
 
-func (p *Peer) talker(rw *bufio.ReadWriter) {
+func (p *Peer) talker() {
 	stdReader := bufio.NewReader(os.Stdin)
 	fmt.Println("I am talking now")
 
@@ -149,16 +118,18 @@ func (p *Peer) talker(rw *bufio.ReadWriter) {
 			fmt.Println("Error reading from stdin")
 			panic(err)
 		}
-
-		_, err = rw.WriteString(fmt.Sprintf("%s\n", sendData))
-		if err != nil {
-			fmt.Println("Error writing to buffer")
-			panic(err)
-		}
-		err = rw.Flush()
-		if err != nil {
-			fmt.Println("Error flushing buffer")
-			panic(err)
+		sendData = strings.TrimSpace(sendData)
+		parsedCommand := strings.Split(sendData, " ")
+		if parsedCommand[0] == "ls" {
+			// list peers
+			fmt.Println("Available peers")
+			for peerID := range p.peerList {
+				fmt.Println(peerID)
+			}
+		} else if parsedCommand[0] == "open"{
+			// pass
+		} else {
+			fmt.Printf("Unknown command: '%s'\nUse 'ls' or 'open name'\n", sendData)
 		}
 	}
 }
@@ -210,23 +181,6 @@ func (p *Peer) SendAndWait (data string, timeout int) string {
 	//
 	//peerstore.AddrBook()
 	return ""
-}
-
-func (p *Peer) pingLoop() {
-	for {
-		fmt.Println("[LOOP] printing active peers:")
-		for peerID := range p.peerList {
-			fmt.Printf("[LOOP] peer %s\n", peerID)
-		}
-		fmt.Println("[LOOP] done, sleeping 10s")
-		time.Sleep(10 * time.Second)
-	}
-	// sleep
-	// for each active peer
-	// should i ping?
-	// ping
-	// too many failures?
-	// remove peer from actives
 }
 
 func (p *Peer) openStreamFromPeerData(remoteMA string) network.Stream{

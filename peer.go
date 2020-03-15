@@ -170,8 +170,8 @@ func (p *Peer) talker() {
 		if parsedCommand[0] == "ls" {
 			// list peers
 			fmt.Println("Available peers")
-			for name, data := range p.peerList {
-				fmt.Printf("%s, address: %s\n", name, data.MultiAddress)
+			for _, data := range p.peerList {
+				fmt.Printf("%s, address: %s\n", data.Name, data.MultiAddress)
 			}
 		} else if parsedCommand[0] == "open"{
 			if len(parsedCommand) < 2 {
@@ -212,45 +212,61 @@ func chatWithPeer(stream *network.Stream, remotePeer *PeerData) {
 	// open rw
 	rw := bufio.NewReadWriter(bufio.NewReader(*stream), bufio.NewWriter(*stream))
 	// open read from stdin
-	stdReader := bufio.NewReader(os.Stdin)
+	stdReader := bufio.NewReadWriter(bufio.NewReader(os.Stdin), nil)
 
 	fmt.Printf("Chatting with %s. What do you want to say?\n", remotePeer.Name)
 
-	go readData(rw, remotePeer.Name)
+	ch := make(chan string)
+	go readData(rw, remotePeer.Name, ch)
+	go readData(stdReader, "user", ch)
+	var data string
 
 	for {
+		data =<- ch
 
-		fmt.Print("> ")
-		message, err := stdReader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Error reading from stdin")
-			panic(err)
-		}
+		fmt.Printf("Data is '%s'\n", data)
 
-		if message == "x\n" {
-			// TODO: chat should be automatically closed when reader reaches eof
+		dataSplit := strings.SplitN(data, " ", 2)
+		source := dataSplit[0]
+		message := strings.TrimSpace(dataSplit[1])
+
+		fmt.Printf("Data split: user '%s', message: '%s'\n", source, message)
+
+		if message == "x" {
 			fmt.Println("Closing chat...")
+			err := (*stream).Close()
+			if err == nil{
+				fmt.Println("Error closing")
+			}
 			return
 		}
 
-		_, err = rw.WriteString(fmt.Sprintf("%s\n", message))
-		if err != nil {
-			fmt.Println("Error writing to buffer")
-			panic(err)
-		}
-		err = rw.Flush()
-		if err != nil {
-			fmt.Println("Error flushing buffer")
-			panic(err)
+		if source == "user"{
+			_, err := rw.WriteString(fmt.Sprintf("%s\n", message))
+			if err != nil {
+				fmt.Println("Error writing to buffer")
+				panic(err)
+			}
+			err = rw.Flush()
+			if err != nil {
+				fmt.Println("Error flushing buffer")
+				panic(err)
+			}
+		} else {
+			fmt.Println("unknown source")
+			// Green console colour: 	\x1b[32m
+			// Reset console colour: 	\x1b[0m
+			fmt.Printf("\x1b[32m%s\x1b[0m: %s\n", source, message)
 		}
 	}
 }
 
-func readData(rw *bufio.ReadWriter, name string) {
+func readData(rw *bufio.ReadWriter, name string, ch chan string) {
 	for {
 		str, err := rw.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error reading from buffer")
+			ch <- fmt.Sprintf("%s x", name)
 			return
 		}
 
@@ -258,11 +274,8 @@ func readData(rw *bufio.ReadWriter, name string) {
 			return
 		}
 		if str != "\n" {
-			// Green console colour: 	\x1b[32m
-			// Reset console colour: 	\x1b[0m
-			fmt.Printf("\x1b[32m%s\x1b[0m: %s\n", name, str)
+			ch <- fmt.Sprintf("%s %s", name, str)
 		}
-
 	}
 }
 
